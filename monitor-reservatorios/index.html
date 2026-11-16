@@ -320,6 +320,7 @@ function spark(vals,label){
     <circle cx="${X(cur)}" cy="${Y(vals[cur])}" r="3.5" fill="#fff"/>
     <text x="${pad}" y="${h-2}">${MONTHS[0]}</text><text x="${w-pad}" y="${h-2}" text-anchor="end">${MONTHS[11]}</text></svg>`;
 }
+function autTxt(i){const a=i?.autonomia_dias;return a==null?"estável ou subindo":a===0?"já abaixo de 5%":a>=1000?"> 1000 dias":"~"+fmtInt(a)+" dias"}
 function delta(a,b){if(a==null||b==null)return"—";const d=a-b;return `<span style="color:${d<0?"#ef4444":"#22c55e"}">${d>=0?"+":""}${fmt(d)} p.p.</span>`}
 
 function resPopup(r){
@@ -344,7 +345,7 @@ function resPopup(r){
   <dl class="kv">
     <dt>Ritmo (últimos 60 dias)</dt><dd>${i.tendencia_pp_dia==null?"—":(i.tendencia_pp_dia>=0?"+":"")+fmt(i.tendencia_pp_dia*30,2)+" p.p./mês"}</dd>
     <dt>Previsão 30 / 60 / 90 dias</dt><dd>${["30","60","90"].map(k=>fmt(i.previsao[k],0)+"%").join(" · ")}</dd>
-    <dt>Autonomia até 5%</dt><dd>${i.autonomia_dias==null?"estável ou subindo":i.autonomia_dias>=1000?"> 1000 dias":"~"+fmtInt(i.autonomia_dias)+" dias"}</dd>
+    <dt>Autonomia até 5%</dt><dd>${autTxt(i)}</dd>
     <dt>Chuva últimos 30 dias</dt><dd>${r.chuva_30d==null?"—":fmt(r.chuva_30d)+" mm"}</dd>
     <dt>Chuva prevista 15 dias</dt><dd>${r.chuva_prev_15d==null?"—":fmt(r.chuva_prev_15d)+" mm"}</dd>
   </dl>${spark(i.mensal,"Volume nos últimos 12 meses")}`;
@@ -358,14 +359,14 @@ function munPopup(m){
   const p=munPct(m),st=munStatus(m),seca=D.estados[m.uf]?.seca;
   let h=`<div class="pp-title">${esc(m.nome)}</div><div class="pp-sub">${UF_NAMES[m.uf]} · ${fmtInt(m.pop)} hab. (Censo 2022) · IBGE ${m.cod}</div>
    <span class="pill" style="background:${COLOR[st]}">${LABEL[st]}</span>
-   ${m.pisf?`<span class="pill" style="background:var(--pisf)">Transposição</span>`:""}
+   ${m.pisf?`<span class="pill" style="background:var(--pisf)">${m.pisf<=new Date().getFullYear()?"Transposição":"Transposição prevista "+m.pisf}</span>`:""}
    ${m.decreto?`<span class="pill" style="background:var(--dec)">Decreto</span>`:""}
    ${m.carro_pipa?`<span class="pill" style="background:var(--dec)">Carro-pipa</span>`:""}`;
   if(m.mananciais.length){
     h+=`<div class="pp-h">Açudes que abastecem (Atlas Águas)</div><ul class="pp-list">${m.mananciais.map(c=>{const r=RES_BY[c];if(!r)return"";const v=resPct(r);
       return `<li><span>${esc(r.nome)}</span><span class="c-${statusOf(v)}">${v==null?"s/d":fmt(v)+"%"}</span></li>`}).join("")}</ul>`;
     const pior=RES_BY[m.manancial_critico];
-    if(pior?.ind?.autonomia_dias!=null)h+=`<div class="warn">Manancial mais baixo chega a 5% em ~${fmtInt(pior.ind.autonomia_dias)} dias no ritmo atual.</div>`;
+    if(pior?.ind?.autonomia_dias!=null)h+=`<div class="warn">${pior.ind.autonomia_dias===0?"O manancial mais baixo já está abaixo de 5% e segue caindo.":`Manancial mais baixo chega a 5% em ~${fmtInt(pior.ind.autonomia_dias)} dias no ritmo atual.`}</div>`;
   }else h+=`<div class="warn" style="color:var(--muted)">Nenhuma captação em açude monitorado pelo SAR. O abastecimento pode vir de poços, rios ou açudes menores.</div>`;
   if(m.decreto)h+=`<div class="pp-h">Decreto de emergência</div><dl class="kv">${Object.entries(m.decreto).map(([k,v])=>`<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>`;
   if(m.carro_pipa)h+=`<div class="pp-h">Operação Carro-Pipa</div><dl class="kv">${Object.entries(m.carro_pipa).map(([k,v])=>`<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>`;
@@ -419,7 +420,7 @@ function renderList(){
   }else{
     items=RES.filter(r=>passFilter(r)&&inView(r)).filter(r=>state.show[showKey(statusOf(resPct(r)))]).map(r=>({o:r,p:resPct(r),title:r.nome,
       meta:`${r.municipio||""}/${r.uf} · ${fmt(r.cap)} hm³`,st:statusOf(resPct(r)),
-      sub:r.ind?.autonomia_dias!=null&&r.ind.autonomia_dias<365?"~"+r.ind.autonomia_dias+" dias":"",go:()=>flyRes(r)}));
+      sub:r.ind?.autonomia_dias!=null&&r.ind.autonomia_dias<365?(r.ind.autonomia_dias===0?"< 5%":"~"+r.ind.autonomia_dias+" dias"):"",go:()=>flyRes(r)}));
   }
   items.sort((a,b)=>(a.p??999)-(b.p??999)||(b.o.pop||0)-(a.o.pop||0));
   if(!items.length){ul.innerHTML=`<li class="more">Nada na área visível com esses filtros. Afaste o zoom ou limpe a busca.</li>`;return}
@@ -498,8 +499,8 @@ function downloadCSV(nome,linhas){
 }
 const dec=v=>v==null?"":String(Math.round(v*100)/100).replace(".",",");
 $("csvMun").onclick=()=>{
-  const rows=[["cod_ibge","municipio","uf","populacao_2022","situacao","volume_manancial_mais_baixo_pct","manancial_mais_baixo","mananciais_monitorados","beneficiado_transposicao","decreto","carro_pipa"]];
-  MUN.filter(passFilter).forEach(m=>rows.push([m.cod,m.nome,m.uf,m.pop,LABEL[munStatus(m)],dec(munPct(m)),RES_BY[m.manancial_critico]?.nome||"",m.mananciais.map(c=>RES_BY[c]?.nome).join(" | "),m.pisf?"sim":"",m.decreto?"sim":"",m.carro_pipa?"sim":""]));
+  const rows=[["cod_ibge","municipio","uf","populacao_2022","situacao","volume_manancial_mais_baixo_pct","manancial_mais_baixo","mananciais_monitorados","transposicao_ano_beneficio","decreto","carro_pipa"]];
+  MUN.filter(passFilter).forEach(m=>rows.push([m.cod,m.nome,m.uf,m.pop,LABEL[munStatus(m)],dec(munPct(m)),RES_BY[m.manancial_critico]?.nome||"",m.mananciais.map(c=>RES_BY[c]?.nome).join(" | "),m.pisf??"",m.decreto?"sim":"",m.carro_pipa?"sim":""]));
   downloadCSV(`municipios_${state.uf||"NE"}_${D.gerado_em.slice(0,10)}.csv`,rows);
 };
 $("csvRes").onclick=()=>{

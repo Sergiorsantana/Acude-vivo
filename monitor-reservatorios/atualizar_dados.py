@@ -16,6 +16,7 @@ Uso:  python atualizar_dados.py          (1ª execução leva alguns minutos)
       python atualizar_dados.py --rapido (pula chuva e camadas fixas já baixadas)
 """
 import csv
+import gzip
 import html
 import json
 import re
@@ -58,9 +59,13 @@ def log(msg):
 def get(url, tentativas=3, timeout=120):
     for i in range(tentativas):
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "AcudeVivo/2.0"})
+            req = urllib.request.Request(url, headers={"User-Agent": "AcudeVivo/2.0",
+                                                       "Accept-Encoding": "gzip"})
             with urllib.request.urlopen(req, timeout=timeout) as r:
-                return r.read().decode("utf-8", errors="replace")
+                corpo = r.read()
+                if r.headers.get("Content-Encoding") == "gzip" or corpo[:2] == b"\x1f\x8b":
+                    corpo = gzip.decompress(corpo)
+                return corpo.decode("utf-8", errors="replace")
         except Exception:
             if i == tentativas - 1:
                 raise
@@ -261,6 +266,15 @@ def indicadores(serie):
     }
 
 
+def nome_bonito(nome):
+    """'JATOBÁ II (DO CAIS)' -> 'Jatobá II (do Cais)'"""
+    s = nome.title()
+    s = re.sub(r"\b(Ii|Iii|Iv|Vi|Vii|Viii|Ix|Xi|Xii)\b", lambda m: m.group(1).upper(), s)
+    s = re.sub(r"(?<=\w )(Da|De|Do|Das|Dos|E)\b", lambda m: m.group(1).lower(), s)
+    s = re.sub(r"\bD'(\w)", lambda m: "d'" + m.group(1).upper(), s)
+    return s
+
+
 def status(p):
     if p is None:
         return "nd"
@@ -393,9 +407,10 @@ def centroide(geom):
 # ---------------------------------------------------------------- transposição
 def transposicao():
     arq = PASTA / "transposicao.geojson"
-    if arq.exists() and RAPIDO:
-        beneficiados = json.loads((CACHE / "pisf_mun.json").read_text()) if (CACHE / "pisf_mun.json").exists() else []
-        return beneficiados
+    if arq.exists() and RAPIDO and (CACHE / "pisf_mun.json").exists():
+        b = json.loads((CACHE / "pisf_mun.json").read_text())
+        if isinstance(b, dict):
+            return b
     log("Buscando canais da Transposição do São Francisco (Atlas Águas)…")
     feats = []
     try:
@@ -409,12 +424,13 @@ def transposicao():
         arq.write_text(json.dumps({"type": "FeatureCollection", "features": feats}), encoding="utf-8")
     except Exception as e:
         log(f"  canais PISF: {e}")
-    beneficiados = []
+    beneficiados = {}  # cod_ibge -> ano em que passa a ser beneficiado (2020, 2025, 2035…)
     try:
         for f in arcgis("AtlasAguas2020/PISF_SNIRH3/MapServer/5", "1=1", "cod_ibge,ben_pisf"):
             a = f["attributes"]
-            if a.get("cod_ibge"):
-                beneficiados.append(str(int(float(a["cod_ibge"]))))
+            ano = re.search(r"Beneficiados em (\d{4})", a.get("ben_pisf") or "")
+            if a.get("cod_ibge") and ano:
+                beneficiados[str(int(float(a["cod_ibge"])))] = int(ano.group(1))
         (CACHE / "pisf_mun.json").write_text(json.dumps(beneficiados))
     except Exception as e:
         log(f"  municípios PISF: {e}")
@@ -517,7 +533,7 @@ def main():
     ligacoes = ligar_captacoes(capts, res)
     mun = ibge_municipios()
     MUNICIPIOS_CACHE.update(mun)
-    pisf = set(transposicao())
+    pisf = transposicao()
     secas = monitor_secas()
     if not RAPIDO:
         chuva(res)
@@ -544,7 +560,7 @@ def main():
             "pct": pior[0] if pior else None,
             "manancial_critico": pior[1] if pior else None,
             "status": status(pior[0]) if pior else ("nd" if fontes else "sm"),
-            "pisf": cod in pisf,
+            "pisf": pisf.get(cod),
             "decreto": decretos.get(cod),
             "carro_pipa": pipa.get(cod),
         })
@@ -554,7 +570,7 @@ def main():
     for r in res:
         i = r.get("ind")
         reservatorios.append({
-            "codigo": r["codigo"], "nome": r["nome"].title() if r["sistema"] == "ne" else r["nome"],
+            "codigo": r["codigo"], "nome": nome_bonito(r["nome"]) if r["sistema"] == "ne" else r["nome"],
             "uf": r["uf"], "municipio": r.get("municipio"), "sistema": r["sistema"],
             "lat": r.get("lat"), "lng": r.get("lng"), "fonte_local": r.get("fonte_local"),
             "cap": r.get("cap"), "status": status(i["pct"] if i else None), "ind": i,
@@ -597,8 +613,10 @@ def main():
                 break
         if i["autonomia_dias"] is not None and i["autonomia_dias"] <= 120 and r["municipios"]:
             alertas.append({"tipo": "autonomia", "codigo": r["codigo"], "nivel": "crit",
-                            "texto": f"{r['nome']} ({r['uf']}) chega a 5% em cerca de {i['autonomia_dias']} dias "
-                                     f"no ritmo atual; abastece {len(r['municipios'])} município(s)"})
+                            "texto": (f"{r['nome']} ({r['uf']}) já está em {i['pct']:.1f}% e segue caindo"
+                                      if i["autonomia_dias"] == 0 else
+                                      f"{r['nome']} ({r['uf']}) chega a 5% em cerca de {i['autonomia_dias']} dias no ritmo atual")
+                                     + f"; abastece {len(r['municipios'])} município(s)"})
 
     saida = {
         "gerado_em": datetime.now().isoformat(timespec="minutes"),

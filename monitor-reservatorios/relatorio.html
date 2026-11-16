@@ -107,12 +107,12 @@ function build(){
 
   h+=`<h2>Municípios com manancial crítico (${crit.length})</h2>`;
   h+=crit.length?`<div class="tablewrap"><table><thead><tr><th>Município</th>${uf?"":"<th>UF</th>"}<th>População</th><th class="l">Manancial mais baixo</th><th>Volume</th><th>Autonomia</th><th class="l">Outros</th></tr></thead><tbody>
-    ${crit.slice(0,80).map(m=>{const r=RB[m.manancial_critico];return `<tr><td>${esc(m.nome)}</td>${uf?"":`<td>${m.uf}</td>`}<td class="num">${fmtInt(m.pop)}</td><td class="l">${esc(r?.nome)}</td><td class="num crit">${fmt(m.pct)}%</td><td class="num">${r?.ind?.autonomia_dias!=null?"~"+fmtInt(r.ind.autonomia_dias)+" d":"—"}</td><td class="l">${[m.pisf?"Transposição":"",m.decreto?"Decreto":"",m.carro_pipa?"Carro-pipa":""].filter(Boolean).join(", ")}</td></tr>`}).join("")}
+    ${crit.slice(0,80).map(m=>{const r=RB[m.manancial_critico];return `<tr><td>${esc(m.nome)}</td>${uf?"":`<td>${m.uf}</td>`}<td class="num">${fmtInt(m.pop)}</td><td class="l">${esc(r?.nome)}</td><td class="num crit">${fmt(m.pct)}%</td><td class="num">${r?.ind?.autonomia_dias==null?"—":r.ind.autonomia_dias===0?"< 5%":"~"+fmtInt(r.ind.autonomia_dias)+" d"}</td><td class="l">${[m.pisf?(m.pisf<=new Date().getFullYear()?"Transposição":"Transposição em "+m.pisf):"",m.decreto?"Decreto":"",m.carro_pipa?"Carro-pipa":""].filter(Boolean).join(", ")}</td></tr>`}).join("")}
     </tbody></table></div>${crit.length>80?`<p class="empty">Lista limitada aos 80 mais populosos. A lista completa está no CSV do app.</p>`:""}`:`<p class="empty">Nenhum município com manancial monitorado em situação crítica.</p>`;
 
   if(autonomia.length)h+=`<h2>Açudes que podem chegar a 5% em até 180 dias</h2><div class="tablewrap"><table><thead><tr><th>Açude</th><th>UF</th><th>Volume</th><th>Ritmo</th><th>Dias até 5%</th><th>Municípios</th><th>População abastecida</th></tr></thead><tbody>
     ${autonomia.map(r=>{const pop=r.municipios.reduce((s,c)=>s+(D.municipios.find(m=>m.cod===c)?.pop||0),0);
-      return `<tr><td>${esc(r.nome)}</td><td>${r.uf}</td><td class="num ${st(r.ind.pct)}">${fmt(r.ind.pct)}%</td><td class="num">${fmt(r.ind.tendencia_pp_dia*30,2)} p.p./mês</td><td class="num">~${fmtInt(r.ind.autonomia_dias)}</td><td class="num">${r.municipios.length}</td><td class="num">${fmtInt(pop)}</td></tr>`}).join("")}
+      return `<tr><td>${esc(r.nome)}</td><td>${r.uf}</td><td class="num ${st(r.ind.pct)}">${fmt(r.ind.pct)}%</td><td class="num">${fmt(r.ind.tendencia_pp_dia*30,2)} p.p./mês</td><td class="num">${r.ind.autonomia_dias===0?"já < 5%":"~"+fmtInt(r.ind.autonomia_dias)}</td><td class="num">${r.municipios.length}</td><td class="num">${fmtInt(pop)}</td></tr>`}).join("")}
     </tbody></table></div>`;
 
   h+=`<h2>Açudes mais baixos</h2><div class="tablewrap"><table><thead><tr><th>Açude</th><th>UF</th><th>Capacidade (hm³)</th><th>Volume</th><th>Há 1 ano</th><th>Previsão 90 d</th><th>Chuva 30 d</th><th>Medição</th></tr></thead><tbody>
