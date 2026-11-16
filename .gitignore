@@ -1,0 +1,9 @@
+# histórico baixado do SAR (é refeito pelo script)
+monitor-reservatorios/cache/
+# planilhas próprias de decretos/carro-pipa (podem ter dados internos)
+monitor-reservatorios/dados_externos/*.csv
+!monitor-reservatorios/dados_externos/*.modelo.csv
+# arquivo antigo, substituído por dados.json
+monitor-reservatorios/dados_ana.json
+__pycache__/
+.claude/

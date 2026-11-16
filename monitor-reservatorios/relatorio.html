@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Relatório de Situação Hídrica — Açude Vivo</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600&family=Space+Grotesk:wght@600;700&display=swap">
+<style>
+/* Relatório em A4 retrato: cabeçalho institucional neutro, indicadores, tabelas */
+:root{--fg:#14201f;--muted:#5b6b6c;--line:#d5dddd;--soft:#f2f5f5;--accent:#0e7490;--crit:#dc2626;--alert:#d97706;--ok:#16a34a;--nd:#7b8a8c;
+  --display:"Space Grotesk",system-ui,sans-serif;--body:"IBM Plex Sans",system-ui,sans-serif;--mono:"IBM Plex Mono",ui-monospace,monospace;color-scheme:light}
+*{box-sizing:border-box}
+body{margin:0;background:#e7ecec;color:var(--fg);font:13px/1.5 var(--body)}
+.page{max-width:210mm;margin:24px auto;background:#fff;padding:18mm 16mm;box-shadow:0 2px 16px rgba(0,0,0,.08)}
+.toolbar{max-width:210mm;margin:16px auto 0;display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:0 16px}
+.toolbar select,.toolbar button{font:inherit;padding:8px 12px;border-radius:6px;border:1px solid var(--line);background:#fff;cursor:pointer}
+.toolbar button.primary{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:600}
+.head{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;border-bottom:2px solid var(--fg);padding-bottom:10px;margin-bottom:16px}
+.eyebrow{font:600 10.5px var(--body);letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+h1{font:700 24px/1.15 var(--display);margin:4px 0 0}
+.meta{text-align:right;font:11px var(--mono);color:var(--muted)}
+h2{font:700 15px var(--display);margin:22px 0 8px;padding-bottom:4px;border-bottom:1px solid var(--line)}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.kpi{border:1px solid var(--line);border-radius:6px;padding:10px}
+.kpi .n{font:600 20px/1.1 var(--mono);font-variant-numeric:tabular-nums}
+.kpi .t{font-size:11px;color:var(--muted);margin-top:3px}
+.kpi.hl{border-color:var(--crit);background:#fef2f2}
+p.lead{font-size:13.5px;max-width:70ch}
+table{width:100%;border-collapse:collapse;font-size:11.5px}
+th{font:600 10px var(--body);text-transform:uppercase;letter-spacing:.05em;color:var(--muted);text-align:right;padding:6px 6px;border-bottom:1.5px solid var(--fg)}
+td{padding:5px 6px;border-bottom:1px solid var(--line);text-align:right;font-variant-numeric:tabular-nums}
+th:first-child,td:first-child,th.l,td.l{text-align:left}
+td.num{font-family:var(--mono)}
+.st{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle}
+.crit{color:var(--crit)} .alert{color:var(--alert)} .ok{color:var(--ok)}
+.tablewrap{overflow-x:auto}
+.foot{margin-top:24px;padding-top:8px;border-top:1px solid var(--line);font-size:10.5px;color:var(--muted)}
+.empty{color:var(--muted);font-style:italic}
+@media print{
+  body{background:#fff}.toolbar{display:none}.page{box-shadow:none;margin:0;padding:0;max-width:none}
+  @page{size:A4;margin:14mm 12mm}
+  h2{break-after:avoid} tr{break-inside:avoid}
+}
+@media (max-width:640px){.page{padding:20px 16px;margin:12px 0}.kpis{grid-template-columns:1fr 1fr}.head{flex-direction:column;align-items:flex-start}.meta{text-align:left}}
+</style>
+</head>
+<body>
+<div class="toolbar">
+  <label>Abrangência <select id="uf"><option value="">Todo o Nordeste</option></select></label>
+  <button class="primary" id="print">Imprimir / salvar em PDF</button>
+</div>
+<main class="page" id="page"><p class="empty">Carregando dados…</p></main>
+<script>
+const UF={AL:"Alagoas",BA:"Bahia",CE:"Ceará",MA:"Maranhão",PB:"Paraíba",PE:"Pernambuco",PI:"Piauí",RN:"Rio Grande do Norte",SE:"Sergipe"};
+const LABEL={crit:"Crítico",alert:"Alerta",ok:"Normal",nd:"Sem medição",sm:"Sem açude monitorado"};
+const fmt=(n,d=1)=>n==null||isNaN(n)?"—":n.toLocaleString("pt-BR",{maximumFractionDigits:d});
+const fmtInt=n=>n==null?"—":Math.round(n).toLocaleString("pt-BR");
+const fmtDate=s=>s?s.slice(0,10).split("-").reverse().join("/"):"—";
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const st=p=>p==null?"nd":p<=20?"crit":p<=40?"alert":"ok";
+let D;
+document.getElementById("print").onclick=()=>window.print();
+fetch("dados.json",{cache:"no-store"}).then(r=>r.json()).then(d=>{D=d;
+  const sel=document.getElementById("uf");Object.keys(UF).forEach(u=>sel.add(new Option(UF[u],u)));
+  sel.value=new URLSearchParams(location.search).get("uf")||"";
+  sel.onchange=()=>{history.replaceState(null,"",sel.value?"?uf="+sel.value:"?");build()};build();
+}).catch(()=>{document.getElementById("page").innerHTML='<p class="empty">Não encontrei dados.json. Rode <code>python atualizar_dados.py</code> e recarregue.</p>'});
+
+function build(){
+  const uf=document.getElementById("uf").value, nome=uf?UF[uf]:"Região Nordeste";
+  const RB={};D.reservatorios.forEach(r=>RB[r.codigo]=r);
+  const ms=D.municipios.filter(m=>!uf||m.uf===uf), rs=D.reservatorios.filter(r=>(!uf||r.uf===uf)&&r.ind);
+  const crit=ms.filter(m=>m.status==="crit").sort((a,b)=>(b.pop||0)-(a.pop||0));
+  const alerta=ms.filter(m=>m.status==="alert");
+  const popCrit=crit.reduce((s,m)=>s+(m.pop||0),0), popAlert=alerta.reduce((s,m)=>s+(m.pop||0),0);
+  let cap=0,vol=0;rs.forEach(r=>{if(r.sistema==="ne"&&r.cap&&r.ind.vol!=null){cap+=r.cap;vol+=r.ind.vol}});
+  const eq=cap?100*vol/cap:null;
+  const abaixo10=rs.filter(r=>r.ind.pct<10);
+  const autonomia=rs.filter(r=>r.ind.autonomia_dias!=null&&r.ind.autonomia_dias<=180&&r.municipios.length).sort((a,b)=>a.ind.autonomia_dias-b.ind.autonomia_dias);
+  const piores=[...rs].filter(r=>!r.ind.atrasado).sort((a,b)=>a.ind.pct-b.ind.pct).slice(0,25);
+  const maiores=[...rs].filter(r=>r.cap).sort((a,b)=>b.cap-a.cap).slice(0,15);
+  const al=D.alertas.filter(a=>!uf||RB[a.codigo]?.uf===uf);
+  const yoy=rs.filter(r=>r.sistema==="ne"&&r.cap&&r.ind.ano_anterior!=null);
+  let capY=0,volY=0;yoy.forEach(r=>{capY+=r.cap;volY+=r.cap*r.ind.ano_anterior/100});
+  const eqY=capY?100*volY/capY:null;
+  const g=new Date(D.gerado_em);
+  const estados=Object.entries(D.estados).filter(([u])=>!uf||u===uf);
+
+  let h=`<div class="head"><div><div class="eyebrow">Relatório de situação hídrica</div><h1>${esc(nome)}</h1></div>
+   <div class="meta">Dados de ${g.toLocaleDateString("pt-BR")}<br>Gerado em ${new Date().toLocaleDateString("pt-BR")}<br>Açude Vivo</div></div>
+  <div class="kpis">
+    <div class="kpi hl"><div class="n crit">${fmtInt(popCrit)}</div><div class="t">pessoas em municípios com manancial crítico</div></div>
+    <div class="kpi"><div class="n">${fmtInt(crit.length)}</div><div class="t">municípios com manancial ≤ 20%</div></div>
+    <div class="kpi"><div class="n">${fmtInt(abaixo10.length)}</div><div class="t">açudes abaixo de 10%</div></div>
+    <div class="kpi"><div class="n">${fmt(eq)}%</div><div class="t">reservatório equivalente${eqY!=null?` (há 1 ano: ${fmt(eqY)}%)`:""}</div></div>
+  </div>
+  <p class="lead">${esc(nome)} tem ${fmtInt(rs.length)} açudes com medição no SAR/ANA, somando ${fmt(vol,0)} hm³ armazenados de ${fmt(cap,0)} hm³ de capacidade.
+  ${fmtInt(crit.length)} municípios (${fmtInt(popCrit)} habitantes) dependem de pelo menos um açude monitorado em situação crítica e outros ${fmtInt(alerta.length)} (${fmtInt(popAlert)} hab.) estão em alerta.
+  ${autonomia.length?`${autonomia.length} açude(s) que abastecem cidades podem chegar a 5% em até 180 dias se o ritmo atual de queda continuar.`:""}</p>`;
+
+  if(estados.length>1||estados[0]?.[1].seca){
+    h+=`<h2>Situação por estado</h2><div class="tablewrap"><table><thead><tr><th>Estado</th><th>Equivalente</th><th>Açudes ≤ 20%</th><th>Municípios críticos</th><th>Pop. crítica</th><th>Área em seca</th><th>Monitor de Secas</th></tr></thead><tbody>
+    ${estados.map(([u,e])=>{const s=e.seca;const tot=s?Object.values(s.pct).reduce((a,b)=>a+b,0):null;
+      return `<tr><td>${UF[u]}</td><td class="num ${st(e.equivalente_pct)}">${fmt(e.equivalente_pct)}%</td><td class="num">${e.reservatorios.crit}</td><td class="num">${e.municipios.crit}</td><td class="num">${fmtInt(e.pop_critica)}</td><td class="num">${tot==null?"—":fmt(tot)+"%"}</td><td>${s?esc(s.mapa):"—"}</td></tr>`}).join("")}
+    </tbody></table></div>`;
+  }
+
+  h+=`<h2>Municípios com manancial crítico (${crit.length})</h2>`;
+  h+=crit.length?`<div class="tablewrap"><table><thead><tr><th>Município</th>${uf?"":"<th>UF</th>"}<th>População</th><th class="l">Manancial mais baixo</th><th>Volume</th><th>Autonomia</th><th class="l">Outros</th></tr></thead><tbody>
+    ${crit.slice(0,80).map(m=>{const r=RB[m.manancial_critico];return `<tr><td>${esc(m.nome)}</td>${uf?"":`<td>${m.uf}</td>`}<td class="num">${fmtInt(m.pop)}</td><td class="l">${esc(r?.nome)}</td><td class="num crit">${fmt(m.pct)}%</td><td class="num">${r?.ind?.autonomia_dias!=null?"~"+fmtInt(r.ind.autonomia_dias)+" d":"—"}</td><td class="l">${[m.pisf?"Transposição":"",m.decreto?"Decreto":"",m.carro_pipa?"Carro-pipa":""].filter(Boolean).join(", ")}</td></tr>`}).join("")}
+    </tbody></table></div>${crit.length>80?`<p class="empty">Lista limitada aos 80 mais populosos. A lista completa está no CSV do app.</p>`:""}`:`<p class="empty">Nenhum município com manancial monitorado em situação crítica.</p>`;
+
+  if(autonomia.length)h+=`<h2>Açudes que podem chegar a 5% em até 180 dias</h2><div class="tablewrap"><table><thead><tr><th>Açude</th><th>UF</th><th>Volume</th><th>Ritmo</th><th>Dias até 5%</th><th>Municípios</th><th>População abastecida</th></tr></thead><tbody>
+    ${autonomia.map(r=>{const pop=r.municipios.reduce((s,c)=>s+(D.municipios.find(m=>m.cod===c)?.pop||0),0);
+      return `<tr><td>${esc(r.nome)}</td><td>${r.uf}</td><td class="num ${st(r.ind.pct)}">${fmt(r.ind.pct)}%</td><td class="num">${fmt(r.ind.tendencia_pp_dia*30,2)} p.p./mês</td><td class="num">~${fmtInt(r.ind.autonomia_dias)}</td><td class="num">${r.municipios.length}</td><td class="num">${fmtInt(pop)}</td></tr>`}).join("")}
+    </tbody></table></div>`;
+
+  h+=`<h2>Açudes mais baixos</h2><div class="tablewrap"><table><thead><tr><th>Açude</th><th>UF</th><th>Capacidade (hm³)</th><th>Volume</th><th>Há 1 ano</th><th>Previsão 90 d</th><th>Chuva 30 d</th><th>Medição</th></tr></thead><tbody>
+    ${piores.map(r=>`<tr><td>${esc(r.nome)}</td><td>${r.uf}</td><td class="num">${fmt(r.cap)}</td><td class="num ${st(r.ind.pct)}">${fmt(r.ind.pct)}%</td><td class="num">${fmt(r.ind.ano_anterior)}%</td><td class="num">${fmt(r.ind.previsao["90"],0)}%</td><td class="num">${r.chuva_30d==null?"—":fmt(r.chuva_30d,0)+" mm"}</td><td class="num">${fmtDate(r.ind.data)}</td></tr>`).join("")}
+    </tbody></table></div>`;
+
+  h+=`<h2>Maiores reservatórios</h2><div class="tablewrap"><table><thead><tr><th>Açude</th><th>UF</th><th>Capacidade (hm³)</th><th>Volume</th><th>Em 30 dias</th><th>Há 1 ano</th><th>Medição</th></tr></thead><tbody>
+    ${maiores.map(r=>{const d=r.ind.ha_30_dias!=null?r.ind.pct-r.ind.ha_30_dias:null;return `<tr><td>${esc(r.nome)}${r.sistema==="sin"?" *":""}</td><td>${r.uf}</td><td class="num">${fmt(r.cap,0)}</td><td class="num ${st(r.ind.pct)}">${fmt(r.ind.pct)}%</td><td class="num">${d==null?"—":(d>=0?"+":"")+fmt(d)+" p.p."}</td><td class="num">${fmt(r.ind.ano_anterior)}%</td><td class="num">${fmtDate(r.ind.data)}</td></tr>`}).join("")}
+    </tbody></table></div><p class="empty" style="font-size:10.5px">* Reservatórios do setor elétrico: percentual do volume útil.</p>`;
+
+  if(al.length)h+=`<h2>Alertas</h2><ul>${al.map(a=>`<li>${esc(a.texto)}</li>`).join("")}</ul>`;
+
+  h+=`<div class="foot"><b>Fontes:</b> ${Object.values(D.fontes).filter(Boolean).map(esc).join("; ")}.<br>
+  <b>Método:</b> situação do município = açude monitorado mais baixo entre os que o abastecem segundo o Atlas Águas (ANA). Crítico ≤ 20%, alerta 20–40%, normal &gt; 40%.
+  Previsão e autonomia são extrapolações lineares do ritmo dos últimos 60 dias e não consideram chuvas futuras nem mudanças de operação. Municípios abastecidos só por poços, rios ou açudes fora do SAR aparecem como "sem açude monitorado".</div>`;
+  document.getElementById("page").innerHTML=h;
+  document.title=`Relatório hídrico — ${nome} — ${g.toLocaleDateString("pt-BR")}`;
+}
+</script>
+</body>
+</html>
