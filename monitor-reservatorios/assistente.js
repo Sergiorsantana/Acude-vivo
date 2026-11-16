@@ -65,13 +65,13 @@ function achaEntidades(q,uf){
 function intencao(q){
   const tem=(...p)=>p.some(x=>q.includes(x));
   if(tem("chuva","chover","choveu","previsao do tempo","precipita"))return "chuva";
-  if(tem("quando","quanto tempo","autonomia","secar","seca em","acabar","dias ate","chega a 5","esvaziar"))return "autonomia";
+  if(tem("monitor de secas","area em seca","areas em seca","seca no estado","estiagem","categoria de seca"))return "seca";
+  if(tem("quando","quanto tempo","autonomia","secar","vai secar","acabar","dias ate","chega a 5","esvaziar"))return "autonomia";
   if(tem("quantas pessoas","populacao","habitantes","pessoas em risco","gente"))return "populacao";
   if(tem("abaixo de","menos de","inferior a"))return "abaixo";
   if(tem("maiores","maior acude","maior reservatorio","maiores reservatorios"))return "maiores";
   if(tem("alerta"))return "alertas";
   if(tem("transposicao","sao francisco","pisf"))return "transposicao";
-  if(tem("monitor de secas","area em seca","seca no estado","estiagem"))return "seca";
   if(tem("critico","criticos","critica","piores","pior","mais baixo","mais baixos","mais vazios","risco"))return "criticos";
   if(tem("resumo","situacao geral","panorama","como esta o nordeste","nordeste"))return "resumo";
   if(tem("como esta","situacao","volume","nivel","quanto tem","abastece","abastecido"))return "situacao";
@@ -80,7 +80,8 @@ function intencao(q){
 
 // ------------------------------------------------------------ ferramentas (busca nos dados)
 const dataRef=()=>fmtDate(D.gerado_em);
-const fonte=(...f)=>`<div class="ask-src">Fonte: ${f.join(" · ")} · dados de ${dataRef()}</div>`;
+const fonte=(...f)=>`<div class="ask-src">Fonte: ${f.filter(Boolean).join(" · ")} · dados de ${dataRef()}</div>`;
+const PREP={AL:"em",BA:"na",CE:"no",MA:"no",PB:"na",PE:"em",PI:"no",RN:"no",SE:"em"};
 const linkMun=m=>`<a href="#" data-ask-mun="${m.cod}">${esc(m.nome)}/${m.uf}</a>`;
 const linkRes=r=>`<a href="#" data-ask-res="${r.codigo}">${esc(r.nome)}</a>`;
 const pctTxt=p=>p==null?"sem medição":fmt(p)+"%";
@@ -129,11 +130,17 @@ function chuvaUF(uf){
   if(!ms.length)return `<p>Sem dados de chuva para ${UF_NAMES[uf]}.</p>`;
   const top=[...ms].sort((a,b)=>b.chuva.prev_15d-a.chuva.prev_15d).slice(0,6);
   const e=D.estados[uf].chuva;
-  return `<p>Em <b>${UF_NAMES[uf]}</b>, a média prevista é de <b>${fmt(e?.prev_15d)} mm</b> nos próximos 15 dias (${fmt(e?.prev_7d)} mm em 7 dias). Nos últimos 30 dias a média foi ${fmt(e?.obs_30d)} mm.</p>
+  return `<p>${PREP[uf][0].toUpperCase()+PREP[uf].slice(1)} <b>${UF_NAMES[uf]}</b>, a média prevista é de <b>${fmt(e?.prev_15d)} mm</b> nos próximos 15 dias (${fmt(e?.prev_7d)} mm em 7 dias). Nos últimos 30 dias a média foi ${fmt(e?.obs_30d)} mm.</p>
    <p>Onde mais deve chover:</p><ul>${top.map(m=>`<li>${linkMun(m)}: ${fmt(m.chuva.prev_15d)} mm</li>`).join("")}</ul>`+fonte("Open-Meteo");
 }
 function filtroUF(arr,uf){return uf?arr.filter(o=>o.uf===uf):arr}
-const onde=uf=>uf?`em ${UF_NAMES[uf]}`:"no Nordeste";
+const onde=uf=>uf?`${PREP[uf]} ${UF_NAMES[uf]}`:"no Nordeste";
+function autonomiaLista(uf){
+  const rs=filtroUF(RES,uf).filter(r=>r.ind&&r.ind.autonomia_dias!=null&&!r.ind.atrasado&&r.municipios.length)
+    .sort((a,b)=>a.ind.autonomia_dias-b.ind.autonomia_dias).slice(0,12);
+  if(!rs.length)return `<p>Nenhum açude que abastece cidades ${onde(uf)} está em queda que leve a 5% no ritmo atual.</p>`+fonte("ANA/SAR","Atlas Águas");
+  return `<p>Açudes que abastecem cidades ${onde(uf)} e estão mais perto de 5%, no ritmo dos últimos 60 dias:</p><ul>${rs.map(r=>`<li>${linkRes(r)} (${r.uf}): ${fmt(r.ind.pct)}%, ${r.ind.autonomia_dias===0?"já abaixo de 5%":"~"+fmtInt(r.ind.autonomia_dias)+" dias"} · ${r.municipios.length} município(s)</li>`).join("")}</ul>`+fonte("ANA/SAR","Atlas Águas");
+}
 function criticos(uf){
   const ms=filtroUF(MUN,uf).filter(m=>munStatus(m)==="crit").sort((a,b)=>(b.pop||0)-(a.pop||0));
   if(!ms.length)return `<p>Nenhum município ${onde(uf)} depende de açude monitorado em situação crítica (≤ 20%).</p>`+fonte("ANA/SAR","Atlas Águas");
@@ -144,7 +151,7 @@ function populacao(uf){
   const ms=filtroUF(MUN,uf);
   const c=ms.filter(m=>munStatus(m)==="crit"), a=ms.filter(m=>munStatus(m)==="alert");
   const sp=x=>fmtInt(x.reduce((s,m)=>s+(m.pop||0),0));
-  return `<p>${uf?UF_NAMES[uf]:"No Nordeste"}: <b>${sp(c)} pessoas</b> vivem em ${c.length} municípios cujo açude de abastecimento está crítico (≤ 20%), e mais ${sp(a)} em ${a.length} municípios em alerta (20–40%).</p>
+  return `<p>${uf?PREP[uf][0].toUpperCase()+PREP[uf].slice(1)+" "+UF_NAMES[uf]:"No Nordeste"}, <b>${sp(c)} pessoas</b> vivem em ${c.length} municípios cujo açude de abastecimento está crítico (≤ 20%), e mais ${sp(a)} em ${a.length} municípios em alerta (20–40%).</p>
    <p>Isso conta só municípios abastecidos por açudes monitorados pela ANA; quem depende de poços ou açudes pequenos não entra na conta.</p>`+fonte("ANA/SAR","Atlas Águas","IBGE Censo 2022");
 }
 function abaixo(uf,lim){
@@ -164,7 +171,7 @@ function alertas(uf){
 function transposicao(uf){
   const ano=new Date().getFullYear();
   const ms=filtroUF(MUN,uf).filter(m=>m.pisf), ja=ms.filter(m=>m.pisf<=ano), fut=ms.filter(m=>m.pisf>ano);
-  return `<p>${uf?UF_NAMES[uf]:"No Nordeste"}: <b>${ja.length} municípios</b> já são beneficiados pela Transposição do São Francisco (${fmtInt(ja.reduce((s,m)=>s+(m.pop||0),0))} hab.) e ${fut.length} estão previstos para os próximos anos.</p>
+  return `<p>${uf?PREP[uf][0].toUpperCase()+PREP[uf].slice(1)+" "+UF_NAMES[uf]:"No Nordeste"}, <b>${ja.length} municípios</b> já são beneficiados pela Transposição do São Francisco (${fmtInt(ja.reduce((s,m)=>s+(m.pop||0),0))} hab.) e ${fut.length} estão previstos para os próximos anos.</p>
    ${ja.length?`<p>Alguns dos maiores: ${ja.sort((a,b)=>(b.pop||0)-(a.pop||0)).slice(0,8).map(linkMun).join(", ")}.</p>`:""}`+fonte("ANA Atlas Águas (PISF)");
 }
 function seca(uf){
@@ -180,7 +187,9 @@ function resumo(uf){
   let cap=0,vol=0;rs.forEach(r=>{const p=resPct(r);if(r.sistema==="ne"&&r.cap&&p!=null){cap+=r.cap;vol+=r.cap*p/100}});
   const b10=rs.filter(r=>{const p=resPct(r);return p!=null&&p<10}).length;
   const ch=uf?D.estados[uf].chuva:null;
-  return `<p><b>${uf?UF_NAMES[uf]:"Nordeste"}</b>: os açudes monitorados estão com <b>${fmt(cap?100*vol/cap:null)}%</b> do volume total. ${b10} açudes estão abaixo de 10%.</p>
+  if(!cap)return `<p><b>${UF_NAMES[uf]}</b> não tem açudes com medição recente no SAR/ANA (só reservatórios do setor elétrico ou açudes sem dados), então não há volume para resumir.</p>
+   ${ch?`<p>Chuva prevista para os próximos 15 dias: média de ${fmt(ch.prev_15d)} mm.</p>`:""}`+fonte("ANA/SAR",ch?"Open-Meteo":"");
+  return `<p><b>${uf?UF_NAMES[uf]:"Nordeste"}</b>: os açudes monitorados estão com <b>${fmt(100*vol/cap)}%</b> do volume total. ${b10} açudes estão abaixo de 10%.</p>
    <p>${c.length} municípios (${fmtInt(c.reduce((s,m)=>s+(m.pop||0),0))} habitantes) dependem de açude em situação crítica.</p>
    ${ch?`<p>Chuva prevista para os próximos 15 dias: média de ${fmt(ch.prev_15d)} mm.</p>`:""}`+fonte("ANA/SAR","Atlas Águas","IBGE",ch?"Open-Meteo":"");
 }
@@ -195,6 +204,8 @@ function responder(qOrig){
   const querAcude=/\b(acude|barragem|reservatorio|represa)\b/.test(q);
   let ent=ents.find(e=>querAcude?e.tipo==="res":e.tipo==="mun")||ents[0];
   const num=+(q.match(/(\d{1,2})\s*%?/)||[])[1]||null;
+  // nome de açude solto numa pergunta sem assunto de água ("capital da França") não conta
+  if(ent&&ent.tipo==="res"&&!querAcude&&!it&&!/\b(agua|volume|nivel|cheio|vazio)\b/.test(q))ent=null;
 
   if(ent){
     const o=ent.o;
@@ -213,9 +224,10 @@ function responder(qOrig){
     case "alertas": return alertas(uf);
     case "transposicao": return transposicao(uf);
     case "seca": return seca(uf);
+    case "autonomia": return autonomiaLista(uf);
     case "resumo": case "situacao": return resumo(uf);
   }
-  if(uf)return resumo(uf);
+  if(uf&&q.split(" ").filter(Boolean).length<=3)return resumo(uf); // só o nome do estado
   return `<p>Não encontrei isso nos dados. Eu respondo só com o que está nas bases da ANA, do IBGE e da previsão de chuva, então prefiro não chutar.</p>
    <p>Tente citar um município, um açude ou um estado, por exemplo: ${EXEMPLOS.slice(0,3).map(e=>`<a href="#" data-ask-q="${esc(e)}">${esc(e)}</a>`).join(" · ")}</p>`;
 }
