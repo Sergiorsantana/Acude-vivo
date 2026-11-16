@@ -217,11 +217,64 @@ def seca():
     return svg(w, h, corpo, "Área em seca por estado")
 
 
+# ------------------------------------------------------------------ 6. chuva
+def chuva():
+    est = [(uf, e["chuva"]) for uf, e in D["estados"].items() if e.get("chuva")]
+    if not est:
+        return None
+    # série diária média do Nordeste (ponderada pelo nº de municípios ≈ média simples dos estados)
+    dias = est[0][1]["dias"]
+    n = len(dias)
+    media = [sum(c["mm"][i] for _, c in est) / len(est) for i in range(n)]
+    hoje = datetime.fromisoformat(D["gerado_em"]).date().isoformat()
+    i_hoje = next((i for i, t in enumerate(dias) if t >= hoje), n)
+    w = 900
+    L, R, T = 64, 40, 92
+    ph = 170
+    pw = w - L - R
+    mx = max(5, max(media) * 1.15)
+    bw = pw / n
+    corpo = cabecalho("Chuva no Nordeste: últimos 30 dias e previsão",
+                      "Média diária dos municípios (mm) · Open-Meteo, modelos ECMWF, GFS e outros", w)
+    for v in (0, mx / 2, mx):
+        y = T + ph - v / mx * ph
+        corpo += f'<line class="grid" x1="{L}" x2="{w - R}" y1="{y:.1f}" y2="{y:.1f}"/>'
+        corpo += t(L - 10, y + 4, fmt(v, 1), "mu num", 11.5, anchor="end")
+    xh = L + i_hoje * bw
+    corpo += f'<rect x="{xh:.1f}" y="{T - 6}" width="{w - R - xh:.1f}" height="{ph + 6}" class="track" opacity=".6"/>'
+    for i, v in enumerate(media):
+        bh = v / mx * ph
+        cls = "acc" if i >= i_hoje else "mu"
+        corpo += f'<rect class="{cls}" x="{L + i * bw + 1:.1f}" y="{T + ph - bh:.1f}" width="{bw - 2:.1f}" height="{bh:.1f}" rx="1.5"/>'
+    corpo += f'<line class="axis" x1="{xh:.1f}" x2="{xh:.1f}" y1="{T - 6}" y2="{T + ph}" stroke-dasharray="4 3"/>'
+    corpo += t(xh + 8, T + 8, "previsão →", "acc", 12, 700) + t(xh - 8, T + 8, "← observado", "mu", 12, 600, anchor="end")
+    for i in (0, i_hoje, n - 1):
+        if i < n:
+            d = dias[i]
+            corpo += t(L + i * bw + bw / 2, T + ph + 20, f"{d[8:10]}/{d[5:7]}", "mu num", 11.5, anchor="middle")
+    # tabela por estado
+    y = T + ph + 56
+    corpo += t(L, y, "Previsão para os próximos 15 dias por estado (média dos municípios)", "fg", 13.5, 700)
+    y += 14
+    est.sort(key=lambda x: -x[1]["prev_15d"])
+    col = (w - L - R) / 3
+    for k, (uf, c) in enumerate(est):
+        cx = L + (k % 3) * col
+        cy = y + 28 * (k // 3) + 22
+        corpo += t(cx, cy, UF_NOME[uf], "fg", 13) + t(cx + col - 24, cy, f"{fmt(c['prev_15d'], 0)} mm", "acc num", 13, 700, anchor="end")
+    h = y + 28 * ((len(est) + 2) // 3) + 28
+    return svg(w, int(h), corpo, "Chuva observada e prevista no Nordeste")
+
+
 def main():
     SAIDA.mkdir(parents=True, exist_ok=True)
     for nome, f in (("painel", painel), ("evolucao", evolucao), ("populacao", populacao),
-                    ("acudes", acudes), ("seca", seca)):
-        (SAIDA / f"{nome}.svg").write_text(f(), encoding="utf-8")
+                    ("acudes", acudes), ("seca", seca), ("chuva", chuva)):
+        conteudo = f()
+        if not conteudo:
+            print(f"  {nome}: sem dados, mantido o anterior")
+            continue
+        (SAIDA / f"{nome}.svg").write_text(conteudo, encoding="utf-8")
         print(f"  docs/graficos/{nome}.svg")
 
 

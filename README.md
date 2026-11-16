@@ -6,7 +6,8 @@
 
 **548 açudes · 1.794 municípios · 9 estados · 100% dados públicos**
 
-[![Atualização diária](https://github.com/Sergiorsantana/Acude-vivo/actions/workflows/atualizar.yml/badge.svg)](https://github.com/Sergiorsantana/Acude-vivo/actions/workflows/atualizar.yml)
+[![Publicação](https://github.com/Sergiorsantana/Acude-vivo/actions/workflows/atualizar.yml/badge.svg)](https://github.com/Sergiorsantana/Acude-vivo/actions/workflows/atualizar.yml)
+[![Último dado](https://img.shields.io/github/last-commit/Sergiorsantana/Acude-vivo?path=monitor-reservatorios%2Fdados.json&label=dados%20atualizados&color=0e7490)](https://github.com/Sergiorsantana/Acude-vivo/commits/main/monitor-reservatorios/dados.json)
 [![Site](https://img.shields.io/badge/site-no%20ar-0e7490?logo=githubpages&logoColor=white)](https://sergiorsantana.github.io/Acude-vivo/)
 [![Python](https://img.shields.io/badge/python-3.9%2B-3776ab?logo=python&logoColor=white)](https://www.python.org/)
 [![Sem dependências](https://img.shields.io/badge/depend%C3%AAncias-zero-16a34a)](#rodar-no-seu-computador)
@@ -28,6 +29,8 @@ No semiárido, saber quanto de água sobra em cada açude decide quando mandar c
 <img src="docs/graficos/painel.svg" alt="Painel com a população em municípios críticos, municípios críticos, açudes abaixo de 10% e volume total" width="100%">
 
 <img src="docs/graficos/evolucao.svg" alt="Gráfico de linha do volume armazenado nos açudes do Nordeste nos últimos 12 meses" width="100%">
+
+<img src="docs/graficos/chuva.svg" alt="Barras da chuva média diária no Nordeste nos últimos 30 dias e previsão dos próximos 15 dias, com previsão por estado" width="100%">
 
 <img src="docs/graficos/populacao.svg" alt="Barras com a população em municípios com açude crítico ou em alerta, por estado" width="100%">
 
@@ -52,9 +55,10 @@ No semiárido, saber quanto de água sobra em cada açude decide quando mandar c
 | 📉 **Previsão** | Volume em 30, 60 e 90 dias e quantos dias faltam para o açude chegar a 5% no ritmo atual |
 | 🔔 **Alertas** | Açudes que caíram abaixo de 20% ou 10% no último mês e cidades com poucos dias de água |
 | 🛰️ **Antes e depois** | Compara imagens de satélite de 2014 até hoje para qualquer açude |
-| 🌧️ **Chuva** | Chuva dos últimos 30 dias e previsão de 15 dias sobre cada açude |
+| 🌧️ **Chuva e previsão** | Chuva dos últimos 30 dias e previsão dia a dia para os próximos 15 dias em cada um dos 1.794 municípios; o mapa pode ser colorido pela chuva |
 | 🏜️ **Monitor de Secas** | Área de cada estado em seca, de "anormalmente seco" (S0) a excepcional (S4) |
 | 🚰 **Transposição** | Canais do São Francisco e municípios já beneficiados ou previstos |
+| 💬 **Pergunte aos dados** | Assistente que responde em português ("Vai chover em Patos?", "Quantas pessoas estão em risco na Paraíba?") buscando só nos dados oficiais, sempre com a fonte. Não usa IA generativa, então não inventa nada e não custa nada |
 | 📄 **Relatório em PDF** | Relatório por estado pronto para anexar em ofício |
 | 📊 **Planilhas** | Exporta municípios e açudes em CSV, abrindo direto no Excel |
 | ⏳ **Linha do tempo** | Anima os últimos 12 meses para ver a chuva encher e a seca esvaziar |
@@ -69,13 +73,13 @@ flowchart LR
     E[IBGE<br/>população e malha] --> P
     F[Monitor de Secas<br/>ANA/FUNCEME] --> P
     G[Open-Meteo<br/>chuva] --> P
-    P(["atualizar_dados.py<br/>todo dia às 6h"]) --> J[dados.json]
+    P(["atualizar_dados.py<br/>todo dia às 7h"]) --> J[dados.json]
     J --> M[🗺️ Mapa]
     J --> R[📄 Relatório]
     J --> S[📊 Gráficos do README]
 ```
 
-Um robô do GitHub Actions roda o script todo dia às 6h (horário de Brasília), salva os dados novos, redesenha os gráficos acima e publica o site. Nenhum servidor, nenhum banco de dados, nenhum custo.
+Uma tarefa agendada roda o script todo dia às 7h, salva os dados novos, redesenha os gráficos acima e envia ao GitHub, que publica o site. Nenhum servidor, nenhum banco de dados, nenhum custo.
 
 ## Fontes
 
@@ -103,9 +107,9 @@ O app abre em http://localhost:8765 e se atualiza a cada 12 horas enquanto estiv
 
 ## Atualização automática
 
-O workflow [`.github/workflows/atualizar.yml`](.github/workflows/atualizar.yml) roda todo dia. Para rodar na hora, vá em **Actions → Atualizar dados e publicar → Run workflow**.
+O site da ANA não responde a servidores fora do Brasil, então a coleta roda num computador no Brasil: o script [`atualizar_e_enviar.ps1`](atualizar_e_enviar.ps1) é executado todo dia pelo Agendador de Tarefas do Windows, baixa os dados, redesenha os gráficos e envia ao GitHub. A cada envio, o workflow [`publicar`](.github/workflows/atualizar.yml) republica o site.
 
-Como o robô faz commits com os dados novos, rode `git pull` antes de enviar alterações feitas no seu computador.
+Para rodar na hora: `powershell -ExecutionPolicy Bypass -File .\atualizar_e_enviar.ps1`. Rode `git pull` antes de enviar alterações feitas à mão.
 
 ## Contribua
 

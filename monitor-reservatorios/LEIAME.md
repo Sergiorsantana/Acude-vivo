@@ -20,11 +20,19 @@ python atualizar_dados.py
 
 A primeira execução baixa um ano de medições de todos os açudes e leva alguns minutos. As seguintes baixam só o que é novo.
 
+## Atualização diária automática
+
+A tarefa "Acude Vivo - atualizar dados" do Agendador de Tarefas do Windows roda `..\atualizar_e_enviar.ps1` todo dia às 7h (ou assim que o PC ligar, se estiver desligado nesse horário). Ela baixa os dados, redesenha os gráficos e envia ao GitHub, que republica o site. O registro fica em `..\logs\`.
+
+Se a ANA estiver fora do ar, o script usa o último histórico salvo dos açudes e atualiza o resto (chuva, IBGE, Monitor de Secas).
+
 ## Arquivos
 
 | Arquivo | O que é |
 |---|---|
 | `index.html` | O app (mapa) |
+| `assistente.js` | Aba "Perguntar": responde perguntas buscando nos dados |
+| `gerar_graficos.py` | Gera os gráficos SVG do README em `../docs/graficos` |
 | `relatorio.html` | Relatório pronto para imprimir ou salvar em PDF |
 | `sobre.html` | Metodologia, fontes e limitações |
 | `atualizar_dados.py` | Baixa os dados públicos e gera `dados.json` |

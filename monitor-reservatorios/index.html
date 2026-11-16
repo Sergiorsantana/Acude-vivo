@@ -85,6 +85,18 @@ table.uf tr{cursor:pointer} table.uf tbody tr:hover{background:var(--panel-2)}
 .seca-bar{display:flex;height:8px;border-radius:4px;overflow:hidden;background:var(--panel-3);margin-top:3px;min-width:60px}
 .seca-bar i{display:block;height:100%}
 .uf-wrap{overflow-x:auto;padding:4px 10px 12px}
+.ask{padding:10px 16px 16px;display:flex;flex-direction:column;gap:10px}
+.ask-intro{font-size:12px;color:var(--muted);margin:0}
+.ask-chips{display:flex;flex-wrap:wrap;gap:6px}
+.ask-chips .chip{font:inherit;font-size:11.5px;color:var(--fg)}
+.ask-chips .chip:hover{border-color:var(--accent)}
+.ask-q{align-self:flex-end;margin-left:auto;max-width:85%;background:var(--accent);color:#06272e;padding:7px 11px;border-radius:12px 12px 2px 12px;font-weight:500;width:fit-content;margin-top:6px}
+.ask-a{background:var(--panel-2);border:1px solid var(--line);border-radius:2px 12px 12px 12px;padding:4px 12px;font-size:13px;margin-top:6px}
+.ask-a p{margin:8px 0} .ask-a ul{margin:6px 0;padding-left:18px} .ask-a li{margin:2px 0}
+.ask-a a{color:var(--accent)}
+.ask-src{font-size:11px;color:var(--muted);margin:6px 0 8px}
+.ask-form{display:flex;gap:6px;position:sticky;bottom:0;background:var(--panel);padding-top:6px}
+.ask-form input{flex:1;min-width:0;background:var(--panel-2);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:8px 10px;font:inherit}
 footer{display:flex;flex-wrap:wrap;gap:6px;padding:10px 14px;border-top:1px solid var(--line)}
 .note{font-size:11px;color:var(--muted);padding:8px 18px 12px}
 .note a{color:var(--accent)}
@@ -181,6 +193,12 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
           <option value="sat">Satélite</option>
           <option value="topo">Topográfico</option>
         </select>
+        <select id="modo" aria-label="Colorir municípios por" style="grid-column:1/-1">
+          <option value="sit">Colorir municípios por: situação do açude</option>
+          <option value="obs">Colorir municípios por: chuva nos últimos 30 dias</option>
+          <option value="prev">Colorir municípios por: previsão de chuva (15 dias)</option>
+          <option value="prev7">Colorir municípios por: previsão de chuva (7 dias)</option>
+        </select>
         <input type="search" id="q" placeholder="Buscar município ou açude…" aria-label="Buscar">
       </div>
       <div class="layers">
@@ -205,6 +223,7 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
       <button class="tab" role="tab" data-tab="res" aria-selected="false">Açudes</button>
       <button class="tab" role="tab" data-tab="uf" aria-selected="false">Estados</button>
       <button class="tab" role="tab" data-tab="alr" aria-selected="false">Alertas</button>
+      <button class="tab" role="tab" data-tab="ask" aria-selected="false">Perguntar</button>
     </div>
     <div id="tabBody"><ul id="list"></ul></div>
     <div class="note" id="note"></div>
@@ -250,7 +269,7 @@ const statusOf=p=>p==null?"nd":p<=20?"crit":p<=40?"alert":"ok";
 const norm=s=>(s||"").normalize("NFD").replace(/[̀-ͯ]/g,"").toLowerCase();
 
 let D, MONTHS=[], RES=[], MUN=[], RES_BY={}, MUN_BY={};
-const state={month:11,uf:"",q:"",show:{crit:true,alert:true,ok:true,sm:true},tab:"mun"};
+const state={month:11,uf:"",q:"",show:{crit:true,alert:true,ok:true,sm:true},tab:"mun",modo:"sit"};
 try{const t=localStorage.getItem("acude-tab");if(t)state.tab=t}catch(e){}
 
 // ---------- Mapa ----------
@@ -263,15 +282,30 @@ const labels=L.tileLayer(esri+"Reference/World_Boundaries_and_Places/MapServer/t
 let base=sat.addTo(map); labels.addTo(map);
 $("basemap").onchange=e=>{map.removeLayer(base);map.removeLayer(labels);base=(e.target.value==="topo"?topo:sat).addTo(map);if(e.target.value==="sat-lbl")labels.addTo(map)};
 L.control.scale({imperial:false}).addTo(map);
+// escala de chuva (mm): marrom = seco, verde-azulado = chuvoso
+const CHUVA_FAIXAS=[[0,"#8c510a","menos de 1 mm"],[1,"#d8b365","1–5 mm"],[5,"#f6e8c3","5–15 mm"],[15,"#c7eae5","15–30 mm"],[30,"#5ab4ac","30–60 mm"],[60,"#01665e","60–120 mm"],[120,"#003c30","mais de 120 mm"]];
+const chuvaCor=mm=>{let c=CHUVA_FAIXAS[0][1];for(const [lim,cor] of CHUVA_FAIXAS)if(mm>=lim)c=cor;return c};
+const MODO_TXT={obs:"Chuva nos últimos 30 dias",prev:"Previsão de chuva · 15 dias",prev7:"Previsão de chuva · 7 dias"};
+const chuvaValor=m=>{const c=m.chuva;if(!c)return null;return state.modo==="obs"?c.obs_30d:state.modo==="prev"?c.prev_15d:c.prev_7d};
 const legend=L.control({position:"bottomright"});
-legend.onAdd=()=>{const d=L.DomUtil.create("div","legend");d.innerHTML=
+let legendDiv;
+legend.onAdd=()=>{legendDiv=L.DomUtil.create("div","legend");drawLegend();return legendDiv};
+function drawLegend(){
+  if(!legendDiv)return;
+  if(state.modo!=="sit"){
+    legendDiv.innerHTML=`<div style="font-weight:600;margin-bottom:2px">${MODO_TXT[state.modo]}</div>`+
+      CHUVA_FAIXAS.map(([,c,l])=>`<div class="row"><span class="sq" style="background:${c}"></span>${l}</div>`).join("")+
+      `<div class="row" style="color:var(--muted);font-size:11px">Open-Meteo (ECMWF, GFS e outros)</div>`;return;
+  }
+  legendDiv.innerHTML=
  `<div class="row"><span class="sq" style="background:${COLOR.crit}"></span>Crítico ≤ 20%</div>
   <div class="row"><span class="sq" style="background:${COLOR.alert}"></span>Alerta 20–40%</div>
   <div class="row"><span class="sq" style="background:${COLOR.ok}"></span>Normal &gt; 40%</div>
   <div class="row"><span class="sq" style="background:${COLOR.nd}"></span>Sem medição recente</div>
   <div class="row"><span class="sq" style="background:none;border:1px solid #7b8a8c"></span>Sem açude monitorado</div>
   <div class="row"><span class="sq" style="background:var(--pisf);height:3px"></span>Transposição (PISF)</div>
-  <div class="row" style="color:var(--muted);font-size:11px">Círculos = açudes · áreas = municípios</div>`;return d};
+  <div class="row" style="color:var(--muted);font-size:11px">Círculos = açudes · áreas = municípios</div>`;
+}
 legend.addTo(map);
 
 const munLayer=L.geoJSON(null,{style:()=>({weight:.6,color:"#0d1416",fillOpacity:.5})});
@@ -293,6 +327,11 @@ function munStyle(f){
   const m=MUN_BY[f.properties.codarea]; if(!m)return{opacity:0,fillOpacity:0};
   const st=munStatus(m), vis=passFilter(m)&&state.show[showKey(st)];
   const flag=$("lyDec").checked&&(m.decreto||m.carro_pipa);
+  if(state.modo!=="sit"){
+    const v=chuvaValor(m), ok=passFilter(m);
+    return{fillColor:v==null?"#3b4a4d":chuvaCor(v),fillOpacity:ok?(v==null?.1:.7):0,color:flag?"#c084fc":"#0d1416",
+      weight:flag?2.2:.4,dashArray:flag?"4 3":null,opacity:ok?.8:.15};
+  }
   return{fillColor:COLOR[st],fillOpacity:!vis?0:st==="sm"?.06:.48,color:flag?"#c084fc":"#0d1416",
     weight:flag?2.2:.5,dashArray:flag?"4 3":null,opacity:vis?.9:.15};
 }
@@ -370,9 +409,22 @@ function munPopup(m){
   }else h+=`<div class="warn" style="color:var(--muted)">Nenhuma captação em açude monitorado pelo SAR. O abastecimento pode vir de poços, rios ou açudes menores.</div>`;
   if(m.decreto)h+=`<div class="pp-h">Decreto de emergência</div><dl class="kv">${Object.entries(m.decreto).map(([k,v])=>`<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>`;
   if(m.carro_pipa)h+=`<div class="pp-h">Operação Carro-Pipa</div><dl class="kv">${Object.entries(m.carro_pipa).map(([k,v])=>`<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>`;
+  if(m.chuva)h+=chuvaBloco(m.chuva);
   if(seca)h+=`<div class="pp-h">Monitor de Secas · ${esc(seca.mapa)} · ${m.uf}</div>${secaBar(seca)}<div style="font-size:11px;color:var(--muted);margin-top:4px">${secaTxt(seca)}</div>`;
   if(m.mananciais.length)h+=spark(MONTHS.map((_,i)=>munPct(m,i)),"Volume do manancial mais baixo");
   return h;
+}
+function chuvaBloco(c){
+  const dias=c.prev_dias||[], w=248,h=78,pad=2,bw=(w-2*pad)/Math.max(1,dias.length);
+  const mx=Math.max(10,...dias.map(d=>d[1]));
+  const bars=dias.map(([t,v,p],i)=>{const bh=(v/mx)*(h-28);const x=pad+i*bw;
+    return `<rect x="${(x+1).toFixed(1)}" y="${(h-16-bh).toFixed(1)}" width="${(bw-2).toFixed(1)}" height="${Math.max(bh,v>0?1:0).toFixed(1)}" rx="1.5" fill="${v>=1?"#4fc3d9":"#2c4a50"}"><title>${fmtDate(t)}: ${fmt(v)} mm${p!=null?" · "+p+"% de chance":""}</title></rect>`}).join("");
+  const lbl=dias.length?`<text x="${pad}" y="${h-3}">${fmtDate(dias[0][0]).slice(0,5)}</text><text x="${w-pad}" y="${h-3}" text-anchor="end">${fmtDate(dias[dias.length-1][0]).slice(0,5)}</text><text x="${w-pad}" y="10" text-anchor="end">máx. ${fmt(Math.max(...dias.map(d=>d[1])))} mm/dia</text>`:"";
+  return `<div class="pp-h">Chuva (Open-Meteo)</div><dl class="kv">
+    <dt>Últimos 7 / 30 dias</dt><dd>${fmt(c.obs_7d)} / ${fmt(c.obs_30d)} mm</dd>
+    <dt>Previsão 7 / 15 dias</dt><dd style="color:var(--accent)">${fmt(c.prev_7d)} / ${fmt(c.prev_15d)} mm</dd>
+    <dt>Dias com chuva previstos</dt><dd>${c.dias_com_chuva_prev} de ${dias.length}</dd></dl>
+    <svg class="spark" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" role="img" aria-label="Previsão de chuva diária">${bars}${lbl}</svg>`;
 }
 function secaBar(s){return `<div class="seca-bar">${["S0","S1","S2","S3","S4"].map(k=>s.pct[k]?`<i style="width:${s.pct[k]}%;background:${SECA_COR[k]}" title="${k}: ${s.pct[k]}%"></i>`:"").join("")}</div>`}
 function secaTxt(s){const tot=Object.values(s.pct).reduce((a,b)=>a+b,0);return `${fmt(tot)}% do estado em seca · ${["S0","S1","S2","S3","S4"].filter(k=>s.pct[k]).map(k=>k+" "+fmt(s.pct[k])+"%").join(" · ")}`}
@@ -409,6 +461,8 @@ function renderList(){
   const cnt={crit:0,alert:0,ok:0,sm:0}; vis.forEach(m=>cnt[showKey(munStatus(m))]++);
   $("nCrit").textContent=cnt.crit;$("nAlert").textContent=cnt.alert;$("nOk").textContent=cnt.ok;$("nSm").textContent=cnt.sm;
   $("visCount").textContent=vis.length;
+  if(state.tab==="ask")return window.renderAsk?renderAsk(body):null;
+  body.dataset.tab="";
   if(state.tab==="uf")return renderStates(body);
   if(state.tab==="alr")return renderAlerts(body);
   body.innerHTML=`<ul id="list"></ul>`; const ul=$("list");
@@ -436,9 +490,9 @@ function renderList(){
 }
 function renderStates(body){
   const rows=Object.entries(D.estados).sort((a,b)=>(a[1].equivalente_pct??999)-(b[1].equivalente_pct??999));
-  body.innerHTML=`<div class="uf-wrap"><table class="uf"><thead><tr><th>UF</th><th title="Reservatório equivalente">Equiv.</th><th title="Açudes críticos">Açudes ≤20%</th><th title="Municípios com manancial crítico">Mun. crít.</th><th>Pop. crítica</th><th>Seca</th></tr></thead><tbody>
+  body.innerHTML=`<div class="uf-wrap"><table class="uf"><thead><tr><th>UF</th><th title="Reservatório equivalente">Equiv.</th><th title="Açudes críticos">Açudes ≤20%</th><th title="Municípios com manancial crítico">Mun. crít.</th><th>Pop. crítica</th><th title="Chuva média prevista nos próximos 15 dias">Chuva 15d</th><th>Seca</th></tr></thead><tbody>
   ${rows.map(([uf,e])=>`<tr data-uf="${uf}"><td><b>${uf}</b></td><td class="c-${statusOf(e.equivalente_pct)}">${fmt(e.equivalente_pct)}%</td>
-    <td>${e.reservatorios.crit}</td><td>${e.municipios.crit}</td><td>${fmtInt(e.pop_critica)}</td>
+    <td>${e.reservatorios.crit}</td><td>${e.municipios.crit}</td><td>${fmtInt(e.pop_critica)}</td><td style="color:var(--accent)">${e.chuva?fmt(e.chuva.prev_15d,0)+" mm":"—"}</td>
     <td>${e.seca?secaBar(e.seca):"—"}</td></tr>`).join("")}</tbody></table>
   <p class="note" style="padding:8px 4px">Equivalente: soma dos volumes ÷ soma das capacidades dos açudes do SAR no estado (sem os reservatórios do setor elétrico). Seca: área do estado por categoria no último Monitor de Secas (S0 amarelo → S4 vinho).
   ${state.uf&&D.estados[state.uf]?.seca?`<br><a href="${D.estados[state.uf].seca.imagem}" target="_blank" rel="noopener">Ver mapa do Monitor de Secas (${esc(D.estados[state.uf].seca.mapa)})</a>`:""}</p></div>`;
@@ -524,6 +578,8 @@ $("lyMun").onchange=e=>e.target.checked?munLayer.addTo(map):map.removeLayer(munL
 $("lyRes").onchange=e=>e.target.checked?resLayer.addTo(map):map.removeLayer(resLayer);
 $("lyPisf").onchange=e=>e.target.checked?pisfLayer.addTo(map):map.removeLayer(pisfLayer);
 $("lyDec").onchange=()=>munLayer.setStyle(munStyle);
+$("modo").onchange=e=>{state.modo=e.target.value;drawLegend();munLayer.setStyle(munStyle);
+  if(state.modo!=="sit"&&!$("lyMun").checked){$("lyMun").checked=true;munLayer.addTo(map)}};
 let timer=null;
 $("play").onclick=e=>{const b=e.currentTarget;if(timer){clearInterval(timer);timer=null;b.textContent="▶";return}
   b.textContent="❚❚";if(state.month===11){state.month=0;$("month").value=0;render()}
@@ -555,7 +611,7 @@ let mvT;map.on("moveend",()=>{clearTimeout(mvT);mvT=setTimeout(renderList,120)})
     const geo=await (await fetch("municipios.geojson")).json();
     munLayer.addData(geo);
     munLayer.eachLayer(l=>{const m=MUN_BY[l.feature.properties.codarea];if(!m)return;m.layer=l;
-      l.bindPopup(()=>munPopup(m),{maxWidth:320});l.bindTooltip(()=>`${esc(m.nome)}/${m.uf} · ${LABEL[munStatus(m)]}`,{sticky:true})});
+      l.bindPopup(()=>munPopup(m),{maxWidth:320});l.bindTooltip(()=>`${esc(m.nome)}/${m.uf} · ${state.modo==="sit"?LABEL[munStatus(m)]:MODO_TXT[state.modo]+": "+(chuvaValor(m)==null?"s/d":fmt(chuvaValor(m))+" mm")}`,{sticky:true})});
     munLayer.addTo(map);
   }catch(e){console.warn("malha municipal indisponível",e)}
   try{pisfLayer.addData(await (await fetch("transposicao.geojson")).json());
@@ -566,5 +622,6 @@ let mvT;map.on("moveend",()=>{clearTimeout(mvT);mvT=setTimeout(renderList,120)})
   $("loading").remove();
 })();
 </script>
+<script src="assistente.js"></script>
 </body>
 </html>

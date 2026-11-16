@@ -21,11 +21,14 @@ import html
 import json
 import re
 import sys
+import threading
 import time
 import unicodedata
 import urllib.parse
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor
+import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import TimeoutError as FuturesTimeout
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -56,16 +59,40 @@ def log(msg):
     print(msg, flush=True)
 
 
+def _baixar(url, timeout):
+    req = urllib.request.Request(url, headers={"User-Agent": "AcudeVivo/2.0",
+                                               "Accept-Encoding": "gzip"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        corpo = r.read()
+        if r.headers.get("Content-Encoding") == "gzip" or corpo[:2] == b"\x1f\x8b":
+            corpo = gzip.decompress(corpo)
+        return corpo.decode("utf-8", errors="replace")
+
+
+def _com_prazo(url, timeout):
+    """baixa com prazo TOTAL (o timeout do urllib vale só por leitura;
+    um servidor que manda dados a conta-gotas nunca estoura)"""
+    caixa = {}
+
+    def alvo():
+        try:
+            caixa["ok"] = _baixar(url, timeout)
+        except Exception as e:
+            caixa["erro"] = e
+    th = threading.Thread(target=alvo, daemon=True)
+    th.start()
+    th.join(timeout * 1.5)
+    if th.is_alive():
+        raise TimeoutError(f"sem resposta completa em {timeout * 1.5:.0f}s")
+    if "erro" in caixa:
+        raise caixa["erro"]
+    return caixa["ok"]
+
+
 def get(url, tentativas=3, timeout=120):
     for i in range(tentativas):
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "AcudeVivo/2.0",
-                                                       "Accept-Encoding": "gzip"})
-            with urllib.request.urlopen(req, timeout=timeout) as r:
-                corpo = r.read()
-                if r.headers.get("Content-Encoding") == "gzip" or corpo[:2] == b"\x1f\x8b":
-                    corpo = gzip.decompress(corpo)
-                return corpo.decode("utf-8", errors="replace")
+            return _com_prazo(url, timeout)
         except Exception:
             if i == tentativas - 1:
                 raise
@@ -124,7 +151,7 @@ def semelhanca(a, b):
 def lista_sar():
     copia = CACHE / "lista_sar.html"
     try:
-        t = get(SAR + "Medicao", tentativas=5)
+        t = get(SAR + "Medicao", tentativas=3, timeout=60)
         copia.write_text(t, encoding="utf-8")
     except Exception as e:
         if not copia.exists():
@@ -149,7 +176,7 @@ def baixar_medicoes(r, inicio):
     pagina = "Medicao" if r["sistema"] == "ne" else "MedicaoSin"
     url = (f"{SAR}{pagina}?dropDownListEstados=&dropDownListReservatorios={r['codigo']}"
            f"&dataInicial={inicio:%d/%m/%Y}&dataFinal={HOJE:%d/%m/%Y}&button=Buscar")
-    t = get(url)
+    t = get(url, tentativas=2, timeout=60)
     tabela = t[t.find("<table"):]
     out = {}
     cap = None
@@ -172,17 +199,28 @@ def baixar_medicoes(r, inicio):
     return out, cap
 
 
+SAR_FALHAS = {"seguidas": 0, "desligado": False}
+SAR_LIMITE_FALHAS = 12  # depois disso, considera o SAR fora do ar e usa o histórico salvo
+
+
 def atualizar_serie(r):
     arq = CACHE / "sar" / f"{r['codigo']}.json"
     antigo = json.loads(arq.read_text(encoding="utf-8")) if arq.exists() else {"serie": {}}
     serie = antigo["serie"]
+    if SAR_FALHAS["desligado"]:
+        return r["codigo"], antigo, "SAR fora do ar; usado histórico salvo"
     if serie:
         inicio = date.fromisoformat(max(serie)) - timedelta(days=15)
     else:
         inicio = HOJE - timedelta(days=400)
     try:
         novo, cap = baixar_medicoes(r, inicio)
+        SAR_FALHAS["seguidas"] = 0
     except Exception as e:
+        SAR_FALHAS["seguidas"] += 1
+        if SAR_FALHAS["seguidas"] >= SAR_LIMITE_FALHAS and not SAR_FALHAS["desligado"]:
+            SAR_FALHAS["desligado"] = True
+            log("  SAR/ANA não está respondendo; usando o histórico salvo dos açudes restantes")
         return r["codigo"], antigo, f"falha: {e}"
     serie.update(novo)
     limite = (HOJE - timedelta(days=430)).isoformat()
@@ -458,26 +496,74 @@ def monitor_secas():
 
 
 # ---------------------------------------------------------------- chuva
-def chuva(reservatorios):
-    log("Buscando chuva observada e prevista (Open-Meteo)…")
-    pts = [r for r in reservatorios if r.get("lat") is not None]
-    for i in range(0, len(pts), 80):
-        lote = pts[i:i + 80]
+def chuva_pontos(itens, rotulo):
+    """Chuva diária dos últimos 30 dias e previsão de 16 dias (Open-Meteo) para cada ponto.
+    Grava em item["_chuva"] = {"dias": [...], "mm": [...], "prob": [...]}."""
+    pts = [x for x in itens if x.get("_lat") is not None]
+    log(f"Buscando chuva observada e prevista para {len(pts)} {rotulo} (Open-Meteo)…")
+    lote_n = 100
+    for i in range(0, len(pts), lote_n):
+        lote = pts[i:i + lote_n]
         q = urllib.parse.urlencode({
-            "latitude": ",".join(str(r["lat"]) for r in lote),
-            "longitude": ",".join(str(r["lng"]) for r in lote),
-            "daily": "precipitation_sum", "past_days": 30, "forecast_days": 16,
-            "timezone": "America/Fortaleza"})
-        try:
-            d = get_json("https://api.open-meteo.com/v1/forecast?" + q)
-            d = d if isinstance(d, list) else [d]
-            for r, x in zip(lote, d):
-                dias, mm = x["daily"]["time"], x["daily"]["precipitation_sum"]
-                hoje = HOJE.isoformat()
-                r["chuva_30d"] = round(sum(v or 0 for t, v in zip(dias, mm) if t < hoje), 1)
-                r["chuva_prev_15d"] = round(sum(v or 0 for t, v in zip(dias, mm) if t >= hoje), 1)
-        except Exception as e:
-            log(f"  chuva lote {i}: {e}")
+            "latitude": ",".join(str(x["_lat"]) for x in lote),
+            "longitude": ",".join(str(x["_lng"]) for x in lote),
+            "daily": "precipitation_sum,precipitation_probability_max",
+            "past_days": 30, "forecast_days": 16, "timezone": "America/Fortaleza"})
+        for tentativa in range(3):
+            try:
+                d = get_json("https://api.open-meteo.com/v1/forecast?" + q, tentativas=1)
+                if isinstance(d, dict) and d.get("error"):
+                    raise RuntimeError(d.get("reason"))
+                d = d if isinstance(d, list) else [d]
+                for x, r in zip(lote, d):
+                    x["_chuva"] = {"dias": r["daily"]["time"],
+                                   "mm": [round(v or 0, 1) for v in r["daily"]["precipitation_sum"]],
+                                   "prob": r["daily"].get("precipitation_probability_max")}
+                break
+            except Exception as e:
+                if tentativa == 2:
+                    log(f"  chuva lote {i}: {e}")
+                else:
+                    time.sleep(30)  # limite de uso por minuto
+        time.sleep(11)  # respeita o limite gratuito (600 chamadas/min por local)
+
+
+def resumo_chuva(c):
+    if not c:
+        return None
+    hoje = HOJE.isoformat()
+    obs = [(t, v) for t, v in zip(c["dias"], c["mm"]) if t < hoje]
+    prev = [(t, v, p) for t, v, p in zip(c["dias"], c["mm"], c["prob"] or [None] * len(c["mm"])) if t >= hoje]
+    return {
+        "obs_30d": round(sum(v for _, v in obs), 1),
+        "obs_7d": round(sum(v for _, v in obs[-7:]), 1),
+        "prev_7d": round(sum(v for _, v, _ in prev[:7]), 1),
+        "prev_15d": round(sum(v for _, v, _ in prev[:15]), 1),
+        "prev_dias": [[t, v, p] for t, v, p in prev[:15]],
+        "dias_com_chuva_prev": sum(1 for _, v, _ in prev[:15] if v >= 1),
+    }
+
+
+def serie_chuva_estado(ac):
+    """média diária da chuva entre os municípios do estado"""
+    if not ac or not ac["n"]:
+        return None
+    hoje = HOJE.isoformat()
+    media = [round(s / ac["n"], 1) for s in ac["soma"]]
+    obs = [v for t, v in zip(ac["dias"], media) if t < hoje]
+    prev = [v for t, v in zip(ac["dias"], media) if t >= hoje]
+    return {"dias": ac["dias"], "mm": media, "obs_30d": round(sum(obs), 1),
+            "prev_7d": round(sum(prev[:7]), 1), "prev_15d": round(sum(prev[:15]), 1)}
+
+
+def chuva(reservatorios):
+    for r in reservatorios:
+        r["_lat"], r["_lng"] = r.get("lat"), r.get("lng")
+    chuva_pontos(reservatorios, "açudes")
+    for r in reservatorios:
+        s = resumo_chuva(r.pop("_chuva", None))
+        if s:
+            r["chuva_30d"], r["chuva_prev_15d"] = s["obs_30d"], s["prev_15d"]
 
 
 # ---------------------------------------------------------------- CSV externos
@@ -513,14 +599,33 @@ def main():
     log(f"  {len(res)} reservatórios no Nordeste")
 
     log("Baixando medições (a 1ª vez demora alguns minutos; depois só o que for novo)…")
+    # teste rápido: se a ANA não responde, nem tenta açude por açude
+    try:
+        get(SAR + "Medicao", tentativas=1, timeout=25)
+    except Exception:
+        SAR_FALHAS["desligado"] = True
+        log("  SAR/ANA fora do ar agora; usando o histórico salvo de todos os açudes")
+    resultados = {}
+    ex = ThreadPoolExecutor(max_workers=8)
+    futuros = {ex.submit(atualizar_serie, r): r for r in res}
+    prazo = time.time() + 20 * 60  # no máximo 20 minutos nesta etapa
     feitos = 0
-    with ThreadPoolExecutor(max_workers=8) as ex:
-        resultados = {}
-        for cod, dados, erro in ex.map(atualizar_serie, res):
+    try:
+        for fut in as_completed(futuros, timeout=max(1, prazo - time.time())):
+            cod, dados, erro = fut.result()
             resultados[cod] = (dados, erro)
             feitos += 1
             if feitos % 50 == 0:
                 log(f"  {feitos}/{len(res)}")
+    except FuturesTimeout:
+        SAR_FALHAS["desligado"] = True
+        log(f"  prazo esgotado com {feitos}/{len(res)} açudes; o restante usa o histórico salvo")
+    ex.shutdown(wait=False, cancel_futures=True)
+    for r in res:
+        if r["codigo"] not in resultados:
+            arq = CACHE / "sar" / f"{r['codigo']}.json"
+            antigo = json.loads(arq.read_text(encoding="utf-8")) if arq.exists() else {"serie": {}}
+            resultados[r["codigo"]] = (antigo, "sem resposta do SAR; usado histórico salvo")
     for r in res:
         dados, erro = resultados[r["codigo"]]
         r["cap"] = r.get("cap") or dados.get("cap")
@@ -535,8 +640,20 @@ def main():
     MUNICIPIOS_CACHE.update(mun)
     pisf = transposicao()
     secas = monitor_secas()
+    chuva_estado = {}
     if not RAPIDO:
         chuva(res)
+        for m in mun.values():
+            m["_lat"], m["_lng"] = (m.get("centro") or [None, None])
+        chuva_pontos(list(mun.values()), "municípios")
+        for m in mun.values():
+            bruto = m.pop("_chuva", None)
+            m["chuva"] = resumo_chuva(bruto)
+            if bruto:
+                ac = chuva_estado.setdefault(m["uf"], {"dias": bruto["dias"], "soma": [0.0] * len(bruto["mm"]), "n": 0})
+                if len(bruto["mm"]) == len(ac["soma"]):
+                    ac["soma"] = [a + b for a, b in zip(ac["soma"], bruto["mm"])]
+                    ac["n"] += 1
     log("Lendo planilhas externas (opcional)…")
     decretos = ler_csv_externo("decretos.csv")
     pipa = ler_csv_externo("carro_pipa.csv")
@@ -563,6 +680,7 @@ def main():
             "pisf": pisf.get(cod),
             "decreto": decretos.get(cod),
             "carro_pipa": pipa.get(cod),
+            "chuva": m.get("chuva"),
         })
 
     # reservatórios (saída)
@@ -598,6 +716,7 @@ def main():
             "decretos": sum(1 for m in ms if m["decreto"]),
             "carro_pipa": sum(1 for m in ms if m["carro_pipa"]),
             "seca": secas.get(uf),
+            "chuva": serie_chuva_estado(chuva_estado.get(uf)),
         }
 
     # alertas
@@ -629,7 +748,7 @@ def main():
             "malha": "IBGE — Malha municipal",
             "transposicao": "ANA — Atlas Águas, canais do PISF",
             "secas": "Monitor de Secas — ANA/FUNCEME e parceiros",
-            "chuva": "Open-Meteo (modelos ECMWF/GFS)",
+            "chuva": "Open-Meteo (modelos ECMWF, GFS e outros centros de meteorologia)",
             "decretos": "Planilha fornecida pelo usuário (S2iD)" if decretos else None,
             "carro_pipa": "Planilha fornecida pelo usuário" if pipa else None,
         },
@@ -652,3 +771,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+    sys.stdout.flush()
+    os._exit(0)  # não espera conexões penduradas com o SAR

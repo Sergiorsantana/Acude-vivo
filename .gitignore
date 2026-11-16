@@ -6,4 +6,5 @@ monitor-reservatorios/dados_externos/*.csv
 # arquivo antigo, substituído por dados.json
 monitor-reservatorios/dados_ana.json
 __pycache__/
+logs/
 .claude/

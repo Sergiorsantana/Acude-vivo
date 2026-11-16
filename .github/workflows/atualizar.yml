@@ -1,73 +1,30 @@
-# Baixa os dados públicos todo dia e publica o site no GitHub Pages.
-# Também publica sempre que houver push na branch main.
-name: Atualizar dados e publicar
+# Publica o site no GitHub Pages a cada push na branch main.
+# Os dados são baixados no computador do mantenedor (atualizar_e_enviar.ps1, todo dia),
+# porque o site da ANA não responde aos servidores do GitHub, que ficam fora do Brasil.
+name: Publicar site
 
 on:
-  schedule:
-    - cron: "0 9 * * *"   # todo dia às 06:00 (horário de Brasília)
-  workflow_dispatch:       # botão "Run workflow" na aba Actions
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
   pages: write
   id-token: write
 
 concurrency:
-  group: atualizar-e-publicar
-  cancel-in-progress: false
+  group: publicar
+  cancel-in-progress: true
 
 jobs:
-  atualizar:
-    if: github.event_name != 'push'
-    runs-on: ubuntu-latest
-    timeout-minutes: 40
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      # histórico dos açudes: evita baixar um ano inteiro a cada execução
-      - uses: actions/cache@v4
-        with:
-          path: monitor-reservatorios/cache
-          key: sar-${{ github.run_id }}
-          restore-keys: sar-
-
-      - name: Baixar dados (ANA, IBGE, Monitor de Secas, Open-Meteo)
-        working-directory: monitor-reservatorios
-        run: python atualizar_dados.py
-
-      - name: Redesenhar os gráficos do README
-        working-directory: monitor-reservatorios
-        run: python gerar_graficos.py
-
-      - name: Salvar dados no repositório
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add monitor-reservatorios/dados.json monitor-reservatorios/municipios.geojson monitor-reservatorios/transposicao.geojson docs/graficos
-          if git diff --cached --quiet; then
-            echo "Sem mudanças nos dados."
-          else
-            git commit -m "Atualiza dados $(date -u +%Y-%m-%d)"
-            git push
-          fi
-
   publicar:
-    needs: atualizar
-    if: ${{ !cancelled() && (needs.atualizar.result == 'success' || needs.atualizar.result == 'skipped') }}
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: main   # pega o commit com os dados recém-baixados
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
