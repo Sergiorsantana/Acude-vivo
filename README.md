@@ -31,4 +31,10 @@ python servidor.py
 
 Abre em http://localhost:8765 e atualiza os dados a cada 12 horas. Para só atualizar os dados: `python atualizar_dados.py`.
 
+## Atualização automática
+
+O GitHub Actions (`.github/workflows/atualizar.yml`) baixa os dados todo dia às 6h (horário de Brasília) e publica o site. Para rodar na hora: aba **Actions → Atualizar dados e publicar → Run workflow**.
+
+Como o robô faz commits com os dados novos, rode `git pull` antes de enviar alterações feitas no seu computador.
+
 Mais detalhes em [`monitor-reservatorios/LEIAME.md`](monitor-reservatorios/LEIAME.md).
